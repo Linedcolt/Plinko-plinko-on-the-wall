@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Plinko — Fixed</title>
+<style>
+  :root{
+    --bg-1:#041018; --bg-2:#05202a; --muted:#9aa7b2; --gold:#ffd86b;
+    --panel: rgba(255,255,255,0.02);
+  }
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial;}
+  body{
+    background:
+      radial-gradient(1200px 600px at 10% 20%, rgba(24,64,80,0.6), transparent 10%),
+      radial-gradient(900px 500px at 90% 80%, rgba(0,24,28,0.5), transparent 10%),
+      linear-gradient(180deg,var(--bg-1), var(--bg-2) 80%);
+    display:flex;align-items:center;justify-content:center;padding:28px;color:#e6eef2;
+  }
+
+  .wrap{width:1100px;max-width:96vw;display:grid;grid-template-columns:1fr 360px;gap:18px;align-items:start;}
+  .panel{border-radius:12px;overflow:hidden;position:relative;box-shadow:0 10px 40px rgba(2,6,23,0.6);border:1px solid rgba(255,255,255,0.03);}
+  .game-area{height:720px;background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent);display:flex;align-items:center;justify-content:center;position:relative;}
+  #game{width:100%;height:100%;display:block;background:transparent;cursor:crosshair;}
+
+  .control{padding:12px 16px;background:linear-gradient(180deg,var(--panel), rgba(255,255,255,0.005));display:flex;flex-direction:column;gap:12px;}
+  .row{display:flex;gap:8px;align-items:center;}
+  select{width:100%;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.03);color:#e6eef2;}
+  .btn{background:linear-gradient(90deg,#22c1c3,#46f0e8);color:#002229;border:none;padding:12px 18px;border-radius:12px;cursor:pointer;font-weight:900;font-size:16px;box-shadow:0 8px 28px rgba(34,193,195,0.16);}
+  .ghost-btn{background:transparent;border:1px solid rgba(255,255,255,0.04);color:#e6eef2;padding:8px;border-radius:8px;cursor:pointer;}
+
+  .balanceBadge{
+    position:absolute;right:18px;top:18px;padding:6px 10px;border-radius:8px;font-weight:900;z-index:40;
+    color:var(--gold);font-size:36px;letter-spacing:0.6px;text-shadow:0 6px 20px rgba(255,216,107,0.08);background:transparent;
+  }
+
+  /* floatingLayer used for top-right stack + absolute popups */
+  .floatingLayer{position:absolute;top:48px;right:18px;width:240px;height:220px;pointer-events:none;overflow:visible;z-index:600;display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
+  .floatText{position:absolute;transform:translateY(0);opacity:1;transition:transform 1.2s cubic-bezier(.2,.9,.2,1),opacity 1.2s;background:transparent;padding:4px 8px;border-radius:6px;font-weight:900;color:var(--gold);box-shadow:0 8px 22px rgba(0,0,0,0.45);backdrop-filter: blur(6px);border:1px solid rgba(255,255,255,0.03);}
+  .floatText.topstack{position:relative;right:0;top:0;}
+  .floatText.fade{transform:translateY(-36px) scale(1.02);opacity:0;}
+
+  .deadOverlay{position:absolute;inset:0;background:linear-gradient(180deg, rgba(0,0,0,0.65), rgba(0,0,0,0.75));display:flex;align-items:center;justify-content:center;z-index:700;flex-direction:column;gap:14px;color:#fff;font-weight:900;font-size:44px;display:none;}
+  .deadOverlay.show{display:flex;}
+  .deadOverlay .sub{font-size:18px;font-weight:600;color:#ffd8d8;}
+
+  .inventoryBar{display:flex;gap:8px;overflow:auto;padding:6px;background:rgba(255,255,255,0.01);border-radius:8px;border:1px solid rgba(255,255,255,0.02);}
+  .invItem{display:flex;gap:8px;align-items:center;padding:6px;border-radius:8px;background:rgba(0,0,0,0.12);cursor:pointer;border:1px solid rgba(255,255,255,0.02);}
+  .invPreview{width:36px;height:36px;border-radius:999px;box-shadow:0 6px 18px rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;}
+  .invMeta{display:flex;flex-direction:column;}
+  .invName{font-weight:800;font-size:13px;}
+  .invCount{font-size:12px;color:var(--muted);}
+
+  .selectedItem{outline:2px solid rgba(255,216,107,0.12);box-shadow:0 6px 20px rgba(255,216,107,0.04);}
+
+  .shop{position:relative;margin-top:auto;border-radius:10px;padding:10px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.03);height:320px;display:flex;flex-direction:column;gap:8px;}
+  .shop-tabs{display:flex;gap:6px;}
+  .tab{padding:8px 10px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,0.03);cursor:pointer;font-weight:700;}
+  .tab.active{background:linear-gradient(90deg,#22c1c3,#46f0e8);color:#042;box-shadow:0 8px 18px rgba(34,193,195,0.12);}
+  .shop-list{overflow:auto;padding:6px;display:flex;flex-direction:column;gap:8px;}
+  .shop-item{display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;background:rgba(0,0,0,0.15);border:1px solid rgba(255,255,255,0.02);}
+  .ball-preview{width:48px;height:48px;border-radius:999px;flex:0 0 48px;box-shadow:0 6px 18px rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;font-weight:900;}
+  .item-info{flex:1;display:flex;flex-direction:column;}
+  .item-title{font-weight:800;}
+  .item-sub{font-size:13px;color:var(--muted);}
+  .item-actions{display:flex;flex-direction:column;gap:6px;align-items:flex-end;}
+
+  .hint{font-size:13px;color:var(--muted);margin-top:8px;}
+  @media (max-width:1150px){ .wrap{grid-template-columns:1fr 380px;} }
+  @media (max-width:920px){ .wrap{grid-template-columns:1fr;} .game-area{height:64vh;} .btn{font-size:14px;padding:10px 12px;} .balanceBadge{font-size:28px;} .shop{height:260px;} }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel game-area" tabindex="0" aria-label="Game area">
+      <canvas id="game"></canvas>
+
+      <!-- Balance in big yellow -->
+      <div class="balanceBadge" id="balanceBadge">200DD</div>
+
+      <!-- floating +DD / popups -->
+      <div class="floatingLayer" id="floatingLayer"></div>
+
+      <!-- YOU DIED overlay -->
+      <div class="deadOverlay" id="deadOverlay"><div>YOU DIED</div><div class="sub">You ran out of DD.</div></div>
+    </div>
+
+    <div class="panel control" aria-label="Game controls">
+      <div class="inventoryBar" id="inventoryBar" aria-label="Inventory"></div>
+
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select id="countSelect" aria-label="Balls count" style="flex:1;">
+          <option>1</option><option>5</option><option>10</option><option>30</option><option>100</option>
+        </select>
+        <button class="btn" id="dropBtn">DROP</button>
+      </div>
+
+      <div style="display:flex;gap:8px;">
+        <button class="ghost-btn" id="resetBtn">Reset</button>
+        <div style="flex:1;text-align:right;color:var(--muted);font-weight:700">Tap canvas to move drop arrow — tapping does not spawn.</div>
+      </div>
+
+      <div class="hint">Balls are bought in the shop; using purchased balls does not cost DD.</div>
+
+      <div class="shop" id="shop">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-weight:900">Shop</div>
+          <div style="font-size:13px;color:var(--muted)">Categories</div>
+        </div>
+        <div class="shop-tabs" id="shopTabs">
+          <div class="tab active" data-tab="balls">Balls</div>
+          <div class="tab" data-tab="specials">Specials</div>
+          <div class="tab" data-tab="maps">Maps</div>
+        </div>
+        <div class="shop-list" id="shopList"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* Fixes:
+ - Correct popup placement for +DD (above the slot) and top-right stack for general messages.
+ - Removed big halo/outer circle behind balls.
+ - Ensure globalAlpha is reset so the rest of the gameplay doesn't fade.
+ - Kept inventory/shop/slot-number-dynamic behavior from the last version.
+*/
+
+(() => {
+  // DOM & canvas
+  const canvas = document.getElementById('game');
+  const container = canvas.parentElement;
+  const ctx = canvas.getContext('2d');
+
+  const countSelect = document.getElementById('countSelect');
+  const dropBtn = document.getElementById('dropBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const balanceBadge = document.getElementById('balanceBadge');
+  const floatingLayer = document.getElementById('floatingLayer');
+  const deadOverlay = document.getElementById('deadOverlay');
+
+  const shopTabs = document.getElementById('shopTabs');
+  const shopList = document.getElementById('shopList');
+  const inventoryBar = document.getElementById('inventoryBar');
+
+  // DPR & size
+  let DPR = Math.max(1, window.devicePixelRatio || 1);
+  let width = 980, height = 720;
+  function resize(){
+    const rect = container.getBoundingClientRect();
+    canvas.width = Math.floor(rect.width * DPR);
+    canvas.height = Math.floor(rect.height * DPR);
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    width = canvas.width / DPR;
+    height = canvas.height / DPR;
+    makePegs();
+    makeSlots();
+  }
+  window.addEventListener('resize', ()=> { DPR = Math.max(1, window.devicePixelRatio || 1); resize(); });
+
+  // constants/state
+  const slotHeight = 110;
+  const gravity = 1500;
+  const rBall = 12;
+  const pegR = 10;
+
+  let pegs = [];
+  let slots = [];
+  let balls = [];
+  let particles = [];
+  let confetti = [];
+
+  let balance = 200;
+  let displayedBalance = balance;
+  let dropX = 0.5;
+
+  // prizes
+  const prizeList = [
+    {value:1,label:'1 DD', color:'#b06b2f'},
+    {value:5,label:'5 DD', color:'#bfc6cc'},
+    {value:10,label:'10 DD', color:'#d4af37'},
+    {value:30,label:'30 DD', color:'#ffd86b'},
+    {value:10,label:'10 DD', color:'#d4af37'},
+    {value:5,label:'5 DD', color:'#bfc6cc'},
+    {value:1,label:'1 DD', color:'#b06b2f'}
+  ];
+
+  // ball types (kept from last change)
+  const ballTypes = [
+    {id:'rubber', name:'Rubber', weight:0.9, bounce:0.92, prizeMult:1.00, cost:0, color:'#9afff0', costFactor:1.00, desc:'Common, bouncy'},
+    {id:'wood',   name:'Wood',   weight:1.05,bounce:0.88, prizeMult:1.05, cost:5, color:['#c69c6d','#e3c8a2'], costFactor:1.35, desc:'Cheap, light'},
+    {id:'stone',  name:'Stone',  weight:1.6, bounce:0.75, prizeMult:1.10, cost:12, color:['#8a8a8a','#cfcfcf'], costFactor:1.9, desc:'Heavy, sturdy'},
+    {id:'copper', name:'Copper', weight:1.4, bounce:0.82, prizeMult:1.15, cost:25, color:['#b87333','#ffd7b0'], costFactor:2.6, desc:'Metallic feel'},
+    {id:'metal',  name:'Metal',  weight:1.9, bounce:0.89, prizeMult:1.20, cost:50, color:['#b0b0b0','#e6e6e6'], costFactor:3.8, desc:'Dense, reliable'},
+    {id:'silver', name:'Silver', weight:1.7, bounce:0.95, prizeMult:1.30, cost:120, color:['#d6f0ff','#bfe8ff'], costFactor:6.2, desc:'Shiny, reactive'},
+    {id:'gold',   name:'Gold',   weight:1.6, bounce:0.97, prizeMult:1.50, cost:250, color:['#ffd700','#fff1b3'], costFactor:10.0, desc:'Premium payout'},
+    {id:'platinum',name:'Platinum',weight:1.45,bounce:0.98,prizeMult:1.70,cost:600, color:['#e5e4e2','#ffffff'], costFactor:20.0, desc:'High-end'},
+    {id:'diamond', name:'Diamond', weight:1.25,bounce:0.99,prizeMult:2.00,cost:1200, color:['#aee4ff','#ffffff'], costFactor:35.0, desc:'Crystal'},
+    {id:'emerald', name:'Emerald', weight:1.15,bounce:0.99,prizeMult:2.20,cost:2400, color:['#50c878','#bff3c7'], costFactor:50.0, desc:'Crystal'},
+    {id:'ruby',    name:'Ruby',    weight:1.18,bounce:0.995,prizeMult:2.50,cost:5000, color:['#e0115f','#ffb3d1'], costFactor:75.0, desc:'Crystal'},
+    {id:'sapphire',name:'Sapphire',weight:1.18,bounce:0.995,prizeMult:3.00,cost:10000, color:['#0f52ba','#8fb8ff'], costFactor:120.0, desc:'Crystal'},
+    {id:'bismuth', name:'Bismuth', weight:2.0, bounce:0.70, prizeMult:3.50, cost:20000, color:['#a2b1f7','#c8e6ff','#ffd86b','#ffb86b','#ff7b7b','#c6a6ff','#9afff0'], costFactor:180.0, desc:'Exotic'}
+  ];
+
+  const inventory = { 'rubber': Infinity };
+  let equipped = 'rubber';
+
+  // shop helpers
+  const buyAmounts = [1,10,50,100,500,1000];
+  let currentShopTab = 'balls';
+
+  function renderInventoryBar(){
+    inventoryBar.innerHTML = '';
+    for(const t of ballTypes){
+      const count = (inventory[t.id] === undefined ? 0 : (inventory[t.id] === Infinity ? '∞' : inventory[t.id]));
+      if(count === 0 && t.id !== 'rubber') continue;
+      const it = document.createElement('div'); it.className = 'invItem' + (equipped === t.id ? ' selectedItem' : '');
+      it.title = `${t.name} — ${t.desc}`;
+      it.addEventListener('click', ()=> { equipped = t.id; renderInventoryBar(); });
+      const prev = document.createElement('div'); prev.className = 'invPreview';
+      if(Array.isArray(t.color)) prev.style.background = `linear-gradient(135deg, ${t.color.join(',')})`;
+      else prev.style.background = `linear-gradient(135deg, ${varyHexBrightness(t.color,0.15)}, ${t.color})`;
+      const meta = document.createElement('div'); meta.className='invMeta';
+      const name = document.createElement('div'); name.className='invName'; name.textContent = t.name;
+      const cnt = document.createElement('div'); cnt.className='invCount'; cnt.textContent = `x${count}`;
+      meta.appendChild(name); meta.appendChild(cnt);
+      it.appendChild(prev); it.appendChild(meta);
+      inventoryBar.appendChild(it);
+    }
+    if(inventoryBar.children.length === 0){
+      const t = ballTypes[0]; inventory[t.id] = Infinity; renderInventoryBar();
+    }
+    renderShopTab(currentShopTab || 'balls');
+  }
+
+  function renderShopTab(tab='balls'){
+    currentShopTab = tab;
+    shopList.innerHTML = '';
+    if(tab === 'balls'){
+      for(const t of ballTypes){
+        const item = document.createElement('div'); item.className = 'shop-item';
+        const preview = document.createElement('div'); preview.className='ball-preview';
+        if(Array.isArray(t.color)) preview.style.background = `linear-gradient(135deg, ${t.color.join(',')})`;
+        else preview.style.background = `linear-gradient(135deg, ${varyHexBrightness(t.color,0.15)}, ${t.color})`;
+
+        const info = document.createElement('div'); info.className='item-info';
+        info.innerHTML = `<div class="item-title">${t.name}</div>
+                          <div class="item-sub">${t.desc} • Weight:${t.weight} • Bounce:${t.bounce} • x${t.prizeMult}</div>`;
+        const actions = document.createElement('div'); actions.className='item-actions';
+
+        const qtyWrap = document.createElement('div'); qtyWrap.style.display='flex'; qtyWrap.style.gap='6px'; qtyWrap.style.alignItems='center';
+        const qtySelect = document.createElement('select');
+        qtySelect.style.padding='6px'; qtySelect.style.borderRadius='6px'; qtySelect.style.background='rgba(255,255,255,0.02)'; qtySelect.style.border='1px solid rgba(255,255,255,0.03)'; qtySelect.style.color='#e6eef2';
+        for(const a of buyAmounts){ const op = document.createElement('option'); op.value = a; op.textContent = a; qtySelect.appendChild(op); }
+
+        const countOwned = document.createElement('div'); countOwned.style.fontWeight='800'; countOwned.style.fontSize='13px'; countOwned.style.color='#e6eef2';
+        const getCount = () => (inventory[t.id] === undefined ? 0 : (inventory[t.id] === Infinity ? '∞' : inventory[t.id]));
+        countOwned.textContent = `Owned: ${getCount()}`;
+
+        const buyBtn = document.createElement('button'); buyBtn.className='btn'; buyBtn.style.padding='8px 12px';
+        const updateBuyText = ()=> { const q = parseInt(qtySelect.value,10); buyBtn.textContent = `${(t.cost * q).toLocaleString()} DD`; };
+        updateBuyText();
+        qtySelect.addEventListener('change', updateBuyText);
+        buyBtn.addEventListener('click', ()=> buyBall(t.id, parseInt(qtySelect.value,10) || 1));
+        qtyWrap.appendChild(qtySelect);
+        qtyWrap.appendChild(buyBtn);
+
+        actions.appendChild(qtyWrap);
+        actions.appendChild(countOwned);
+
+        item.appendChild(preview); item.appendChild(info); item.appendChild(actions);
+        shopList.appendChild(item);
+      }
+    } else {
+      const info = document.createElement('div'); info.style.color='var(--muted)'; info.textContent = 'No items yet in this category.';
+      shopList.appendChild(info);
+    }
+  }
+  shopTabs.addEventListener('click', (e)=>{
+    const t = e.target.closest('.tab');
+    if(!t) return;
+    for(const el of shopTabs.children) el.classList.remove('active');
+    t.classList.add('active');
+    renderShopTab(t.dataset.tab);
+  });
+
+  function buyBall(id, qty=1){
+    const t = ballTypes.find(b=>b.id===id);
+    if(!t) return;
+    if(qty <= 0) return;
+    const totalCost = t.cost * qty;
+    if(balance < totalCost){ showFloating('- not enough DD -'); return; }
+    balance -= totalCost; updateBalanceTarget(balance);
+    if(!inventory[id] || inventory[id] === 0) inventory[id] = 0;
+    if(inventory[id] !== Infinity) inventory[id] += qty;
+    renderInventoryBar();
+    showFloating(`- ${totalCost} DD`);
+  }
+
+  // pegs & slots
+  function makePegs(){
+    pegs = [];
+    const cols = 11;
+    const spacingX = width / (cols);
+    const spacingY = 60;
+    const startY = 110;
+    const safeMargin = pegR + rBall + 14;
+    for(let row=0; row<8; row++){
+      const offset = (row % 2) * (spacingX/2);
+      for(let c=0;c<cols;c++){
+        const x = (c + 0.5) * spacingX + offset;
+        const y = startY + row * spacingY;
+        if(x < safeMargin || x > width - safeMargin) continue;
+        pegs.push({x,y,r:pegR, glow:0});
+      }
+    }
+  }
+  function makeSlots(){
+    slots = []; const n = prizeList.length; const w = width/n;
+    for(let i=0;i<n;i++) slots.push({x:i*w, w, prize:prizeList[i], flash:0});
+  }
+
+  // spawn
+  function spawnBalls(requestedCount){
+    const toSpawn = requestedCount;
+    const baseX = Math.min(Math.max(rBall+4, dropX * width), width - (rBall+4));
+    for(let i=0;i<toSpawn;i++){
+      const jitter = (Math.random()*2-1)*12;
+      const x = Math.min(Math.max(rBall+6, baseX + jitter), width - (rBall+6));
+      let useTypeId = equipped;
+      if(useTypeId !== 'rubber'){
+        if(!inventory[useTypeId] || inventory[useTypeId] === 0 || inventory[useTypeId] === undefined){
+          useTypeId = 'rubber';
+        }
+      }
+      const ballSpec = ballTypes.find(b=>b.id===useTypeId) || ballTypes[0];
+      if(inventory[useTypeId] !== undefined && inventory[useTypeId] !== Infinity){
+        inventory[useTypeId] = Math.max(0, inventory[useTypeId]-1);
+      }
+      const massFactor = ballSpec.weight;
+      balls.push({
+        x, y:40,
+        vx: (Math.random()*140-70) / (massFactor*0.85),
+        vy: 0,
+        r: rBall,
+        baseType: ballSpec,
+        colorVar: (Math.random()*0.2)-0.1,
+        rest:false, landed:false, alpha:1, fadeSpeed:1.4,
+        glintTimer: Math.random() * 2.8
+      });
+    }
+    renderInventoryBar();
+    renderShopTab(currentShopTab || 'balls');
+    showDeathIfNeeded();
+  }
+
+  // particles scaled by balls count
+  function spawnParticles(x,y,count,color,opts={}){
+    const perfFactor = Math.max(0.12, Math.min(1, 300 / Math.max(1, balls.length)));
+    const actual = Math.max(1, Math.round(count * perfFactor));
+    for(let i=0;i<actual;i++){
+      const ang = Math.random()*Math.PI*2;
+      particles.push({
+        x,y,
+        vx: Math.cos(ang)*(10 + Math.random()*60)*(opts.spread||1),
+        vy: Math.sin(ang)*(10+Math.random()*40)*(opts.spread||1),
+        life: opts.life || (0.3 + Math.random()*0.5),
+        size: opts.size || (1 + Math.random()*3),
+        color
+      });
+    }
+  }
+  function spawnConfetti(x,y,amount){
+    const perfFactor = Math.max(0.25, Math.min(1, 300 / Math.max(1, balls.length)));
+    const actual = Math.max(1, Math.round(amount * perfFactor));
+    const colors = ['#ff7b7b','#ffd86b','#9afff0','#bfc6cc','#d4af37','#c6a6ff'];
+    for(let i=0;i<actual;i++){
+      confetti.push({
+        x,y,
+        vx:(Math.random()*2-1)*220,
+        vy:-(120 + Math.random()*340),
+        ang: Math.random()*Math.PI*2,
+        va:(Math.random()*6-3),
+        w:8 + Math.random()*8,
+        h:12 + Math.random()*10,
+        color:colors[Math.floor(Math.random()*colors.length)],
+        life:1.6 + Math.random()*1.2
+      });
+    }
+  }
+
+  // Show floating text. If coords given, show at those canvas coords (above slot), else top-right stack.
+  function showFloating(text, opts = {}) {
+    const el = document.createElement('div');
+    el.className = 'floatText';
+    el.textContent = text;
+    el.style.zIndex = 999;
+    if(opts.x !== undefined && opts.y !== undefined){
+      // position absolute in game-area: convert canvas coords to container CSS pixels
+      const rect = container.getBoundingClientRect();
+      // canvas uses DPR scaling; convert canvas-space coords (which are in CSS px because we used ctx transform) directly
+      const left = opts.x - 20; // small offset center
+      const top = opts.y - 44;
+      el.style.left = `${left}px`;
+      el.style.top = `${top}px`;
+      // attach to container (floatingLayer is inside game area so absolute coords are relative to game area)
+      floatingLayer.appendChild(el);
+    } else {
+      // top-right stack (existing behaviour)
+      el.classList.add('topstack');
+      floatingLayer.appendChild(el);
+      // stack positioning handled by flex inside floatingLayer: make it relative
+    }
+    // animate out
+    requestAnimationFrame(()=> el.classList.add('fade'));
+    setTimeout(()=> { if(el && el.parentElement) el.remove(); }, 1400);
+  }
+
+  // settle and award — now show floating at slot center
+  function settleBall(b){
+    if(b.landed) return;
+    const n = slots.length; const idx = Math.floor((b.x/width)*n);
+    const slot = slots[Math.min(Math.max(idx,0), n-1)];
+    if(!slot) return;
+    const basePrize = slot.prize.value;
+    const mult = b.baseType.prizeMult || 1;
+    const costFactor = b.baseType.costFactor || 1;
+    const awarded = Math.max(0, Math.round(basePrize * mult * costFactor));
+    balance += awarded;
+    updateBalanceTarget(balance);
+    // compute pill position
+    const pillX = slot.x + slot.w/2;
+    const pillY = height - slotHeight/2 + 6;
+    showFloating(`+${awarded} DD`, { x: pillX, y: pillY - 6 });
+    slot.flash = 1.6;
+    if(slot.prize.value === 30) spawnConfetti(width/2, height/3, 80);
+    b.landed = true;
+    b.fadeTimer = b.fadeSpeed;
+    showDeathIfNeeded();
+  }
+
+  // balance UI
+  let animFrameBalance = null;
+  function updateBalanceTarget(newVal){
+    const target = Math.max(0, Math.floor(newVal));
+    if(animFrameBalance) cancelAnimationFrame(animFrameBalance);
+    function step(){
+      if(displayedBalance === target){ balance = target; updateBadge(); return; }
+      const diff = target - displayedBalance; const sign = diff>0?1:-1; const abs = Math.abs(diff);
+      const stepSize = Math.max(1, Math.floor(abs/12));
+      displayedBalance += sign * stepSize;
+      if((sign>0 && displayedBalance>target) || (sign<0 && displayedBalance<target)) displayedBalance = target;
+      updateBadge();
+      animFrameBalance = requestAnimationFrame(step);
+    }
+    animFrameBalance = requestAnimationFrame(step);
+  }
+  function updateBadge(){ balanceBadge.textContent = `${displayedBalance}DD`; }
+
+  // physics parameters
+  const wallRestitution = 0.5;
+  const floorRestitution = 0.38;
+  const linearDamping = 0.997;
+  const sleepSpeed = 22;
+
+  function resolveCircleCircleDynamic(a, b){
+    const dx = b.x - a.x; const dy = b.y - a.y;
+    const dist = Math.hypot(dx,dy);
+    const minDist = a.r + b.r;
+    if(dist === 0) return false;
+    if(dist < minDist){
+      const nx = dx/dist; const ny = dy/dist;
+      const penetration = minDist - dist;
+      a.x -= nx * penetration; a.y -= ny * penetration;
+      const relV = a.vx * nx + a.vy * ny;
+      const restitution = 0.96 * (a.baseType.bounce || 1.0);
+      const massFactor = a.baseType.weight || 1;
+      const bounceImpulse = -(1 + restitution) * relV / massFactor;
+      a.vx += bounceImpulse * nx; a.vy += bounceImpulse * ny;
+      a.vx *= 0.995; a.vy *= 0.995;
+      b.glow = Math.min(1, (b.glow||0) + 0.9);
+      spawnParticles(a.x + nx*(a.r-2), a.y + ny*(a.r-2), 3, '#ffd86b');
+      return true;
+    }
+    return false;
+  }
+
+  function stepPhysics(dt){
+    for(let i=balls.length-1;i>=0;i--){
+      const b = balls[i];
+      if(b.landed && b.fadeTimer !== undefined){
+        b.fadeTimer -= dt;
+        b.alpha = Math.max(0, b.fadeTimer / b.fadeSpeed);
+        if(b.fadeTimer <= 0){ balls.splice(i,1); continue; }
+        continue;
+      }
+      if(b.landed) continue;
+
+      const massFactor = b.baseType.weight || 1;
+      b.vy += gravity * dt;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+
+      if(b.x - b.r < 0){ b.x = b.r; b.vx = -b.vx * wallRestitution * (b.baseType.bounce || 1); spawnParticles(b.x+4,b.y,4,getBallPrimaryColor(b)); }
+      else if(b.x + b.r > width){ b.x = width - b.r; b.vx = -b.vx * wallRestitution * (b.baseType.bounce || 1); spawnParticles(b.x-4,b.y,4,getBallPrimaryColor(b)); }
+
+      const floorY = height - slotHeight;
+      if(b.y + b.r > floorY){
+        b.y = floorY - b.r;
+        if(Math.abs(b.vy) > 0){
+          b.vy = -b.vy * floorRestitution * (b.baseType.bounce || 1);
+          b.vx *= 0.9;
+          spawnParticles(b.x, b.y + b.r - 4, 8, getBallPrimaryColor(b));
+        }
+        if(Math.hypot(b.vx, b.vy) < sleepSpeed){
+          b.vx = 0; b.vy = 0; b.rest = true;
+          settleBall(b);
+        }
+      }
+
+      for(let p of pegs) resolveCircleCircleDynamic(b,p);
+
+      b.vx *= Math.pow(linearDamping, dt*60);
+      b.vy *= Math.pow(linearDamping, dt*60);
+
+      b.trailTimer = (b.trailTimer || 0) - dt;
+      if(b.trailTimer <= 0){
+        b.trailTimer = 0.012 + Math.random()*0.018;
+        spawnParticles(b.x - b.vx*0.006, b.y - b.vy*0.006, 1, getBallPrimaryColor(b), {life:0.35,size: Math.max(1,b.r*0.12)});
+      }
+
+      if(isCrystal(b.baseType.id)){
+        b.glintTimer -= dt;
+        if(b.glintTimer <= 0){
+          spawnParticles(b.x + (Math.random()-0.5)*b.r, b.y + (Math.random()-0.5)*b.r, 2, '#ffffff', {life:0.25,size:1.2});
+          b.glintTimer = 0.8 + Math.random()*2.4;
+        }
+      }
+
+      if(b.y > height + 500){ b.rest = true; settleBall(b); }
+    }
+
+    for(let j=particles.length-1;j>=0;j--){
+      const p = particles[j]; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 800*dt; p.life -= dt; p.size *= 0.995;
+      if(p.life <= 0) particles.splice(j,1);
+    }
+    for(let j=confetti.length-1;j>=0;j--){
+      const c = confetti[j]; c.x += c.vx*dt; c.y += c.vy*dt; c.vy += 600*dt; c.ang += c.va*dt; c.life -= dt;
+      if(c.life <= 0) confetti.splice(j,1);
+    }
+
+    for(let p of pegs) p.glow *= 0.92;
+    for(let s of slots) if(s.flash > 0) s.flash = Math.max(0, s.flash - dt);
+  }
+
+  // drawing helpers
+  function varyHexBrightness(hex, diff){
+    if(!hex || hex.indexOf('#')!==0) return hex;
+    const num = parseInt(hex.slice(1),16);
+    let r = (num>>16)&0xff, g=(num>>8)&0xff, b=num&0xff;
+    const f = 1 + diff;
+    r = Math.min(255, Math.max(0, Math.round(r*f)));
+    g = Math.min(255, Math.max(0, Math.round(g*f)));
+    b = Math.min(255, Math.max(0, Math.round(b*f)));
+    return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+  }
+  function colorWithAlpha(hex,a){ if(!hex) return `rgba(255,255,255,${a})`; if(hex.indexOf('#')!==0) return `rgba(255,255,255,${a})`; const n=parseInt(hex.slice(1),16); const r=(n>>16)&255,g=(n>>8)&255,b=n&255; return `rgba(${r},${g},${b},${a})`; }
+  function getBallPrimaryColor(b){
+    const c = b.baseType.color;
+    if(Array.isArray(c)) return c[0];
+    return varyHexBrightness(c, Math.max(-0.08, Math.min(0.12, b.colorVar || 0)));
+  }
+  function isCrystal(id){ return ['diamond','emerald','ruby','sapphire'].includes(id); }
+
+  // smaller gradient only (no large halo)
+  function createBallGradient(b){
+    const cSpec = b.baseType.color;
+    const gx = b.x, gy = b.y, gr = b.r * 1.6; // small radial gradient
+    const g = ctx.createRadialGradient(gx - b.r*0.15, gy - b.r*0.25, b.r*0.25, gx, gy, gr);
+    if(Array.isArray(cSpec)){
+      const stops = cSpec.length;
+      for(let i=0;i<stops;i++){
+        const pos = i / (stops - 1);
+        g.addColorStop(pos, cSpec[i]);
+      }
+    } else {
+      const highlight = varyHexBrightness(cSpec, 0.18 + (b.colorVar||0)*0.5);
+      g.addColorStop(0, highlight);
+      g.addColorStop(1, cSpec);
+    }
+    return g;
+  }
+
+  function roundRect(ctx,x,y,w,h,r,fill,stroke){ if(typeof r==='undefined') r=5; ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); if(fill) ctx.fill(); if(stroke) ctx.stroke(); }
+
+  function draw(){
+    ctx.clearRect(0,0,width,height);
+
+    // pegs
+    for(const p of pegs){
+      if(p.glow > 0.02){ const g=Math.min(1,p.glow); const grad = ctx.createRadialGradient(p.x,p.y,p.r*0.3,p.x,p.y,p.r*5); grad.addColorStop(0,`rgba(255,126,126,${0.22*g})`); grad.addColorStop(1,`rgba(255,126,126,0)`); ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(p.x,p.y,p.r*5,0,Math.PI*2); ctx.fill(); }
+      ctx.beginPath(); ctx.fillStyle = '#ff7b7b'; ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.strokeStyle = `rgba(0,0,0,${0.18 + 0.5*p.glow})`; ctx.lineWidth = 1; ctx.arc(p.x,p.y,p.r-0.8,0,Math.PI*2); ctx.stroke();
+    }
+
+    // slots - live computed text
+    for(let i=0;i<slots.length;i++){
+      const s = slots[i];
+      ctx.fillStyle = (i%2===0)?'rgba(255,255,255,0.012)':'rgba(0,0,0,0.03)';
+      ctx.fillRect(s.x, height - slotHeight, s.w, slotHeight);
+      ctx.beginPath(); ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.moveTo(s.x, height - slotHeight); ctx.lineTo(s.x, height); ctx.stroke();
+      const pillX = s.x + s.w/2; const pillY = height - slotHeight/2 + 6; const pillW=84,pillH=32;
+      if(s.prize.value === 30) ctx.fillStyle = '#ffd86b'; else ctx.fillStyle = s.prize.color || '#fff';
+      roundRect(ctx, pillX - pillW/2, pillY - pillH/2, pillW, pillH, 8, true, false);
+
+      // live update prize numbers based on equipped
+      const t = ballTypes.find(b=>b.id===equipped) || ballTypes[0];
+      const computed = Math.max(0, Math.round(s.prize.value * (t.prizeMult || 1) * (t.costFactor || 1)));
+      ctx.fillStyle = '#021617'; ctx.font = '700 16px Inter, Arial'; ctx.textAlign='center';
+      ctx.fillText(`${computed} DD`, pillX, pillY+6);
+
+      if(s.flash > 0){ const alpha = Math.min(0.85, s.flash*0.55); ctx.fillStyle = `rgba(255,255,255,${alpha})`; ctx.fillRect(s.x, height - slotHeight, s.w, slotHeight); }
+    }
+
+    // draw drop arrow
+    const arrowX = dropX * width;
+    ctx.beginPath(); ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 2; ctx.moveTo(arrowX, 8); ctx.lineTo(arrowX, 36); ctx.stroke();
+    ctx.beginPath(); ctx.fillStyle = '#ffd86b'; ctx.moveTo(arrowX-8, 36); ctx.lineTo(arrowX+8, 36); ctx.lineTo(arrowX, 44); ctx.closePath(); ctx.fill();
+
+    // balls — NO halo/outer circle; only compact gradient + core
+    for(const b of balls){
+      const alpha = ('alpha' in b) ? b.alpha : 1;
+      const g = createBallGradient(b);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.beginPath(); ctx.fillStyle = g; ctx.arc(b.x,b.y,b.r*1.6,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+
+      ctx.beginPath(); ctx.fillStyle = getBallPrimaryColor(b); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.fillStyle = `rgba(255,255,255,${0.6*alpha})`; ctx.ellipse(b.x - b.r*0.28,b.y - b.r*0.5,b.r*0.35,b.r*0.22,-0.5,0,Math.PI*2); ctx.fill();
+
+      // crystal texture lines (subtle)
+      if(isCrystal(b.baseType.id)){
+        ctx.globalAlpha = 0.08;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(b.x - b.r*0.7, b.y - b.r*0.2);
+        ctx.lineTo(b.x + b.r*0.2, b.y - b.r*0.6);
+        ctx.moveTo(b.x - b.r*0.3, b.y + b.r*0.1);
+        ctx.lineTo(b.x + b.r*0.6, b.y - b.r*0.1);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // particles & confetti
+    for(let i=particles.length-1;i>=0;i--){ const p=particles[i]; ctx.globalAlpha = Math.max(0, Math.min(1, p.life/0.9)); ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1; }
+    for(const c of confetti){ ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(c.ang); ctx.fillStyle = c.color; ctx.fillRect(-c.w/2,-c.h/2,c.w,c.h); ctx.restore(); }
+
+    // ensure alpha is reset
+    ctx.globalAlpha = 1;
+  }
+
+  // animation
+  let last = performance.now();
+  function frame(ts){
+    const now = ts; const dt = Math.min(0.034, (now - last)/1000); last = now;
+    stepPhysics(dt); draw(); requestAnimationFrame(frame);
+  }
+
+  // events
+  dropBtn.addEventListener('click', ()=> spawnBalls(parseInt(countSelect.value,10) || 1));
+  resetBtn.addEventListener('click', ()=> { balls=[];particles=[];confetti=[]; balance=200; displayedBalance=200; updateBadge(); showDeathIfNeeded(); inventoryResetPreview(); });
+
+  // canvas click only moves drop arrow
+  canvas.addEventListener('click', (e)=> {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (canvas.width/rect.width) / DPR;
+    dropX = Math.min(Math.max(0, x / width), 1);
+  });
+
+  window.addEventListener('keydown', (e)=> {
+    if(e.key === ' ') { e.preventDefault(); spawnBalls(parseInt(countSelect.value,10) || 1); }
+    if(e.key === 'r') { balls=[];particles=[];confetti=[]; balance=200; displayedBalance=200; updateBadge(); showDeathIfNeeded(); inventoryResetPreview(); }
+  });
+
+  function showDeathIfNeeded(){ if(balance <= 0) deadOverlay.classList.add('show'); else deadOverlay.classList.remove('show'); }
+  setInterval(()=> { if(balls.length > 1600) balls = balls.filter(b=>b.y < height + 800); }, 7000);
+
+  DPR = Math.max(1, window.devicePixelRatio || 1);
+  resize(); last = performance.now(); requestAnimationFrame(frame);
+
+  // balance UI
+  function updateBalanceTarget(newVal){
+    const target = Math.max(0, Math.floor(newVal));
+    if(window._animBalance) cancelAnimationFrame(window._animBalance);
+    function step(){
+      if(displayedBalance === target){ balance = target; updateBadge(); return; }
+      const diff = target - displayedBalance; const sign = diff>0?1:-1; const abs = Math.abs(diff);
+      const stepSize = Math.max(1, Math.floor(abs/10));
+      displayedBalance += sign * stepSize;
+      if((sign>0 && displayedBalance>target) || (sign<0 && displayedBalance<target)) displayedBalance = target;
+      updateBadge();
+      window._animBalance = requestAnimationFrame(step);
+    }
+    window._animBalance = requestAnimationFrame(step);
+  }
+  function updateBadge(){ balanceBadge.textContent = `${displayedBalance}DD`; }
+
+  function inventoryResetPreview(){
+    for(const k in inventory) if(k!=='rubber') inventory[k]=0;
+    inventory['rubber'] = Infinity;
+    renderInventoryBar();
+    renderShopTab(currentShopTab || 'balls');
+  }
+
+  // initial render
+  renderShopTab('balls');
+  renderInventoryBar();
+
+})();
+</script>
+</body>
+</html>
