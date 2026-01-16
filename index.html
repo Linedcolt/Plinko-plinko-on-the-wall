@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-<title>Minesweeper Field — Save/Load + Streaks</title>
+<title>Minesweeper Field — Save/Load + Streaks + Points</title>
 <style>
   :root{
     --hud-bg: rgba(255,255,255,0.95);
@@ -41,7 +41,7 @@
   .btn { display:inline-flex; align-items:center; justify-content:center; min-width:var(--btn-size); height:var(--btn-size); background:var(--hud-bg); border-radius:12px; font-weight:800; color:var(--accent); box-shadow:0 8px 20px rgba(0,0,0,0.08); user-select:none; touch-action:none; pointer-events:auto; cursor:pointer; }
   .btn.small { min-width:48px; height:48px; border-radius:10px; font-size:14px; }
 
-  .settings { position:absolute; right:12px; top:12px; background:var(--hud-bg); padding:12px; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,0.10); pointer-events:auto; z-index:90; display:none; width:260px; }
+  .settings { position:absolute; right:12px; top:12px; background:var(--hud-bg); padding:12px; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,0.10); pointer-events:auto; z-index:90; display:none; width:280px; }
   .settings.show{ display:block; }
   .settings label{ display:block; font-weight:700; color:var(--accent); margin-bottom:6px; }
   .settings input[type="range"]{ width:100%; }
@@ -123,11 +123,12 @@
     <div style="font-size:12px;color:#444;margin-top:6px">Export copies JSON to clipboard; Import asks for JSON to paste.</div>
   </div>
 
-  <div class="info" id="info">Tiles uncovered: <span id="uncovered">0</span> / <span id="total">0</span> • Streak: <span id="streak">0</span></div>
+  <div class="info" id="info">Tiles uncovered: <span id="uncovered">0</span> / <span id="total">0</span> • Streak: <span id="streak">0</span> • Points: <span id="pointsTotal">0</span></div>
 
   <div class="overlay" id="overlay">
     <h2 id="overlayTitle">Game Over</h2>
     <div id="overlayMsg">You stepped on a mine.</div>
+    <div id="overlayPoints" style="margin-top:8px;font-weight:700"></div>
     <button id="overlayRestart">Restart</button>
   </div>
 </div>
@@ -135,19 +136,20 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
 <script>
 /*
-  Adds:
-  - save/load/export/import via localStorage for "continue on GitHub Pages"
-  - streaks (increment on win; reset on death or restart)
-  - auto-save on key moments and periodic autosave
-  - save structure is compact (grid size, minesPlaced, mine coords, uncovered coords, player pos/yaw/pitch, streak)
+  Changes in this file:
+  - overlay restart preserves streak when the overlay showed a win
+  - 'Clear' button now confirms with the user before clearing save and resetting streak
+  - Points system: scored on win, scales with area, mine density and time taken.
+  - Points saved in save file and shown in HUD. Export/import includes points.
+  - Timer starts on first uncover (so resuming keeps timer).
 */
 
-// LOCALSTORAGE KEY
+// LocalStorage key
 const SAVE_KEY = 'minesweeper_save_v1';
 
-// ----------------- existing game code (minefield reskin + nerfed bob + joystick + touch look) -----------------
+// --- main code (integrated with previous features) ---
 (() => {
-  // selection/suggestion guard
+  // prevent selection / suggestion popups
   document.addEventListener('selectionchange', () => {
     const s = document.getSelection();
     if (s && s.type === 'Range') s.removeAllRanges();
@@ -155,6 +157,7 @@ const SAVE_KEY = 'minesweeper_save_v1';
   });
   window.addEventListener('contextmenu', (e) => e.preventDefault(), { passive:false });
 
+  // three.js
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x87ceeb, 0.0009);
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -171,11 +174,11 @@ const SAVE_KEY = 'minesweeper_save_v1';
   let GRID_W = 10, GRID_H = 10, MINES = 15;
   const BLOCK = 1;
 
-  // storage
+  // world storage
   const tiles = new Map();
   const tileGroup = new THREE.Group(); scene.add(tileGroup);
 
-  // minefield materials
+  // materials (minefield skin)
   const coveredSide = new THREE.MeshStandardMaterial({ color: 0x5a4f3f });
   const coveredTop = new THREE.MeshStandardMaterial({ color: 0x2d7a2f });
   const uncoveredSide = new THREE.MeshStandardMaterial({ color: 0x8f5a2b });
@@ -198,7 +201,7 @@ const SAVE_KEY = 'minesweeper_save_v1';
     scene.add(floor);
   }
 
-  // lazy mine placement so first uncovered is safe + 0
+  // lazy mine placement (ensure first uncovered cell + neighbors are safe and first tile is 0)
   let minesPlaced = false;
 
   function createTile(x,z){
@@ -264,42 +267,53 @@ const SAVE_KEY = 'minesweeper_save_v1';
     return { mat, tex };
   }
 
-  // particles + scorch
+  // particles & scorch geometry
   const particles = [];
   const particleGeom = new THREE.SphereGeometry(0.06, 8, 6);
   const particleMat = new THREE.MeshStandardMaterial({ color: 0xff8a33, emissive: 0xff5a00, metalness: 0.1, roughness: 0.6 });
   const scorchGeom = new THREE.CircleGeometry(0.6, 32);
 
-  // -- state
+  // state
   let uncoveredCount = 0;
   let running = true;
 
-  // STREAK LOGIC
+  // STREAK & POINTS
   let streak = 0;
+  let totalPoints = 0;
   const streakEl = document.getElementById('streak');
+  const pointsEl = document.getElementById('pointsTotal');
   function setStreak(n){
     streak = Math.max(0, Math.floor(n || 0));
     streakEl.textContent = streak;
   }
+  function setTotalPoints(n){
+    totalPoints = Math.max(0, Math.round(n || 0));
+    pointsEl.textContent = totalPoints;
+  }
 
+  // timer: startTime gets set on first uncover (allowing time taken measurement)
+  let startTime = null;
+
+  // ---- Save / Load ----
   function saveState(){
     try {
       const save = {
         v:1,
         GRID_W, GRID_H, MINES,
         minesPlaced: !!minesPlaced,
-        mines: [], // array of "x,z"
+        mines: [],
         uncovered: [],
         player: { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch },
         uncoveredCount,
-        streak
+        streak,
+        pointsTotal: totalPoints,
+        startTime: startTime ? startTime : null
       };
       if (minesPlaced){
         tiles.forEach(t => { if (t.mine) save.mines.push([t.x, t.z]); });
       }
       tiles.forEach(t => { if (t.uncovered) save.uncovered.push([t.x, t.z]); });
       localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-      // quick visual feedback to console
       console.log('Saved game (localStorage).');
     } catch (e){
       console.warn('Save failed:', e);
@@ -312,14 +326,11 @@ const SAVE_KEY = 'minesweeper_save_v1';
       if (!raw) return false;
       const save = JSON.parse(raw);
       if (!save || !save.v) return false;
-      // apply grid settings
       GRID_W = Number(save.GRID_W) || GRID_W;
       GRID_H = Number(save.GRID_H) || GRID_H;
       MINES = Number(save.MINES) || MINES;
       buildGrid();
-      // place mines if provided
       if (save.mines && save.mines.length){
-        // clear first
         tiles.forEach(t => t.mine = false);
         for (const m of save.mines){ const [mx,mz] = m; const t = tiles.get(k(mx,mz)); if (t) t.mine = true; }
         tiles.forEach(t => t.adj = countAdjacent(t.x, t.z));
@@ -328,7 +339,6 @@ const SAVE_KEY = 'minesweeper_save_v1';
         minesPlaced = !!save.minesPlaced;
         if (minesPlaced) tiles.forEach(t => t.adj = countAdjacent(t.x, t.z));
       }
-      // apply uncovered
       uncoveredCount = 0;
       if (Array.isArray(save.uncovered)){
         for (const u of save.uncovered){
@@ -345,18 +355,17 @@ const SAVE_KEY = 'minesweeper_save_v1';
           uncoveredCount++;
         }
       }
-      // apply player
       if (save.player){
         player.pos.set(save.player.x, save.player.y, save.player.z);
         player.yaw = save.player.yaw || 0;
         player.pitch = save.player.pitch || 0;
         camera.position.copy(player.pos);
       }
-      // uncoveredCount and UI
       document.getElementById('uncovered').textContent = uncoveredCount;
       document.getElementById('total').textContent = GRID_W*GRID_H - MINES;
-      // streak
       setStreak(save.streak || 0);
+      setTotalPoints(save.pointsTotal || 0);
+      startTime = save.startTime || null;
       console.log('Loaded save from localStorage.');
       return true;
     } catch (e){
@@ -369,13 +378,12 @@ const SAVE_KEY = 'minesweeper_save_v1';
     try { localStorage.removeItem(SAVE_KEY); console.log('Save cleared'); } catch(e){}
   }
 
-  // auto-save throttle: call saveState at key moments & periodic
+  // autosave scheduler
   let saveTimer = null;
   function scheduleAutoSave(){
     if (saveTimer) return;
     saveTimer = setTimeout(()=>{ saveTimer = null; saveState(); }, 600);
   }
-  // also periodic autosave every 8s (while running)
   setInterval(()=>{ if (running) saveState(); }, 8000);
 
   // export/import helpers
@@ -391,14 +399,15 @@ const SAVE_KEY = 'minesweeper_save_v1';
     try {
       const obj = JSON.parse(txt);
       localStorage.setItem(SAVE_KEY, JSON.stringify(obj));
-      alert('Imported save. Reloading state...');
-      loadState();
+      alert('Imported save. Loading state...');
+      const ok = loadState();
+      if (!ok) alert('Imported JSON loaded but may be incompatible.');
     } catch (e){
       alert('Invalid JSON.');
     }
   }
 
-  // explosion & uncover logic
+  // ---- Explosion / uncover logic ----
   function explodeAtTile(tile){
     const center = new THREE.Vector3(tile.x * BLOCK, BLOCK/2, tile.z * BLOCK);
     // scorch
@@ -423,7 +432,6 @@ const SAVE_KEY = 'minesweeper_save_v1';
       scene.add(m);
       particles.push({ mesh: m, vel: new THREE.Vector3(vx, vy, vz), life:0, maxLife: 0.9 + Math.random()*0.6, birth: performance.now(), light: null });
     }
-    // flash object
     const flashObj = { light: flash, start: performance.now(), dur: 600 };
     particles.push(flashObj);
     tile.mesh.material = uncoveredMaterialArray(uncoveredTopPlain);
@@ -435,45 +443,69 @@ const SAVE_KEY = 'minesweeper_save_v1';
 
   function checkWin(){
     if (uncoveredCount >= GRID_W*GRID_H - MINES){
-      // increment streak, save, and show win
+      // compute points for the run
+      const now = Date.now();
+      const timeTakenSec = startTime ? Math.max(1, Math.round((now - startTime)/1000)) : 9999;
+      const area = GRID_W * GRID_H;
+      const density = MINES / area; // 0..1
+      // Points formula:
+      // base = area
+      // difficulty multiplier = 1 + 2 * density
+      // time multiplier = clamp(2 - timeTaken/30, 0.35..2)
+      const base = area;
+      const diffMul = 1 + 2 * density;
+      const timeMul = Math.max(0.35, Math.min(2.0, 2 - (timeTakenSec / 30)));
+      let runPoints = Math.round(base * diffMul * timeMul);
+      // small bonus for streaks (1% per streak)
+      runPoints = Math.round(runPoints * (1 + Math.min(0.5, streak * 0.01)));
+      // apply
       setStreak(streak + 1);
+      setTotalPoints(totalPoints + runPoints);
       saveState();
-      gameOver(true);
-    }
-  }
-
-  function gameOver(win){
-    running = false;
-    const overlay = document.getElementById('overlay');
-    const overlayTitle = document.getElementById('overlayTitle');
-    const overlayMsg = document.getElementById('overlayMsg');
-    overlay.classList.add('show');
-    overlayTitle.textContent = win ? 'You Win!' : 'You Lost';
-    overlayMsg.textContent = win ? 'All safe tiles uncovered.' : 'You stepped on a mine.';
-    if (!win){
-      // reset streak on death
-      setStreak(0);
-      saveState();
-    } else {
-      saveState();
+      // show overlay with points info
+      const overlay = document.getElementById('overlay');
+      const overlayTitle = document.getElementById('overlayTitle');
+      const overlayMsg = document.getElementById('overlayMsg');
+      const overlayPoints = document.getElementById('overlayPoints');
+      overlay.classList.add('show');
+      overlayTitle.textContent = 'You Win!';
+      overlayMsg.textContent = 'All safe tiles uncovered.';
+      overlayPoints.textContent = `+${runPoints} points • Total: ${totalPoints}`;
+      running = false;
     }
   }
 
   function gameOverAfterExplosion(){
     revealAllMines();
-    setTimeout(()=> gameOver(false), 700);
+    // reset streak on death
+    setStreak(0);
+    saveState();
+    setTimeout(()=> {
+      const overlay = document.getElementById('overlay');
+      const overlayTitle = document.getElementById('overlayTitle');
+      const overlayMsg = document.getElementById('overlayMsg');
+      const overlayPoints = document.getElementById('overlayPoints');
+      overlay.classList.add('show');
+      overlayTitle.textContent = 'You Lost';
+      overlayMsg.textContent = 'You stepped on a mine.';
+      overlayPoints.textContent = '';
+    }, 700);
   }
 
-  // uncover logic (lazy placement first uncover)
+  // uncover tile (lazy placement) and start timer if needed
   function uncoverTile(x,z){
-    if (!minesPlaced) placeMinesExcluding(x, z);
+    if (!minesPlaced){
+      placeMinesExcluding(x, z);
+      // mark start time at first uncover
+      startTime = Date.now();
+    }
     const tile = tiles.get(k(x,z));
     if (!tile || tile.uncovered) return;
     tile.uncovered = true;
     if (tile.mine){
       explodeAtTile(tile);
-      gameOverAfterExplosion();
       scheduleAutoSave();
+      gameOverAfterExplosion();
       return;
     }
     if (tile.adj > 0){
@@ -499,7 +531,7 @@ const SAVE_KEY = 'minesweeper_save_v1';
   // build initial grid
   buildGrid();
 
-  // player + movement physics + nerfed bobbing
+  // --- player & movement (physics + nerfed bobbing) ---
   const player = { pos: new THREE.Vector3(0,1.6,GRID_H/2 + 3), vel: new THREE.Vector3(), yaw: 0, pitch: 0, height: 1.6 };
   camera.position.copy(player.pos);
   const MOVE_SPEED = 3.6, MAX_SPEED = 5.5, JUMP_SPEED = 6.4, GRAV = -20.0;
@@ -519,11 +551,21 @@ const SAVE_KEY = 'minesweeper_save_v1';
     if (e.code === 'KeyD') keys.right = 0;
   });
 
-  // joystick
+  // joystick (pointer + touch + mouse)
   const joyEl = document.getElementById('joy'), joyKnob = document.getElementById('joyKnob');
   let joyActive = false, joyPointerId = null, joyCenter = null, joyVec = {x:0,y:0};
-  function startJoy(coordX, coordY, id){ joyActive = true; joyPointerId = id || 'mouse'; const r = joyEl.getBoundingClientRect(); joyCenter = { x: r.left + r.width/2, y: r.top + r.height/2 }; updateJoy(coordX, coordY); }
-  function updateJoy(cx, cy){ const dx = cx - joyCenter.x, dy = cy - joyCenter.y; const max = 56; const nx = Math.max(-1, Math.min(1, dx / max)); const ny = Math.max(-1, Math.min(1, dy / max)); joyVec.x = nx; joyVec.y = -ny; const px = nx * 50, py = -ny * 50; joyKnob.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`; }
+  function startJoy(coordX, coordY, id){
+    joyActive = true; joyPointerId = id || 'mouse';
+    const r = joyEl.getBoundingClientRect(); joyCenter = { x: r.left + r.width/2, y: r.top + r.height/2 };
+    updateJoy(coordX, coordY);
+  }
+  function updateJoy(cx, cy){
+    const dx = cx - joyCenter.x, dy = cy - joyCenter.y;
+    const max = 56; const nx = Math.max(-1, Math.min(1, dx / max)); const ny = Math.max(-1, Math.min(1, dy / max));
+    joyVec.x = nx; joyVec.y = -ny;
+    const px = nx * 50, py = -ny * 50;
+    joyKnob.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
+  }
   function endJoy(){ joyActive=false; joyPointerId=null; joyVec.x=0; joyVec.y=0; joyKnob.style.transform='translate(-50%,-50%)'; }
 
   joyEl.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); startJoy(e.clientX,e.clientY,e.pointerId); joyEl.setPointerCapture && joyEl.setPointerCapture(e.pointerId); }, { passive:false });
@@ -540,7 +582,7 @@ const SAVE_KEY = 'minesweeper_save_v1';
   window.addEventListener('mousemove', (e)=>{ if (!joyActive) return; updateJoy(e.clientX, e.clientY); });
   window.addEventListener('mouseup', ()=>{ if (joyActive) endJoy(); });
 
-  // look handling (global except UI)
+  // look handling global except UI
   let lookActive = false, lookPointerId = null, lastPoint = null;
   function isPointerOnUI(x,y){ const el = document.elementFromPoint(x,y); if (!el) return false; return !!el.closest('.no-look'); }
 
@@ -551,7 +593,7 @@ const SAVE_KEY = 'minesweeper_save_v1';
   window.addEventListener('pointerup', (e)=>{ if (lookActive && e.pointerId === lookPointerId){ lookActive=false; lookPointerId=null; lastPoint=null; } }, { passive:false });
   window.addEventListener('pointercancel', (e)=>{ if (lookActive && e.pointerId === lookPointerId){ lookActive=false; lookPointerId=null; lastPoint=null; } }, { passive:false });
 
-  // pointer lock desktop
+  // pointer lock
   const canvas = renderer.domElement;
   document.getElementById('lockHint').addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); if (document.pointerLockElement !== canvas) canvas.requestPointerLock?.(); }, { passive:false });
   document.addEventListener('pointerlockchange', ()=>{ const pl = (document.pointerLockElement === canvas); document.getElementById('lockHint').style.display = pl ? 'none' : 'block'; });
@@ -606,7 +648,7 @@ const SAVE_KEY = 'minesweeper_save_v1';
 
     player.pos.copy(next);
 
-    // camera orientation
+    // camera
     const baseQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(player.pitch, player.yaw, 0, 'YXZ'));
 
     // NERFED BOBBING
@@ -623,7 +665,7 @@ const SAVE_KEY = 'minesweeper_save_v1';
     const bobOffset = new THREE.Vector3().addScaledVector(rightVec, sway);
     camera.position.set(player.pos.x + bobOffset.x, player.pos.y + bobY, player.pos.z + bobOffset.z);
 
-    // update particles & flashes
+    // particles & flash updates
     const nowMs = performance.now();
     for (let i = particles.length - 1; i >= 0; i--){
       const p = particles[i];
@@ -655,11 +697,11 @@ const SAVE_KEY = 'minesweeper_save_v1';
   }
   requestAnimationFrame(animateLoop);
 
-  // jump
+  // jump button
   const jumpBtn = document.getElementById('jumpBtn');
   jumpBtn.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); if (canJump){ player.vel.y = JUMP_SPEED; canJump = false; } }, { passive:false });
 
-  // settings + steppers + buttons + save/load/export/import wiring
+  // settings UI + steppers + save/load/export/import wiring
   const gear = document.getElementById('gear'), settingsPanel = document.getElementById('settingsPanel');
   const fovRange = document.getElementById('fovRange'), fovValue = document.getElementById('fovValue');
   const gridWInput = document.getElementById('gridW'), gridHInput = document.getElementById('gridH'), minesInput = document.getElementById('minesInput');
@@ -672,7 +714,7 @@ const SAVE_KEY = 'minesweeper_save_v1';
 
   fovRange.addEventListener('input', (e)=>{ const v=Number(e.target.value); fovValue.textContent=v; camera.fov=v; camera.updateProjectionMatrix(); });
 
-  applyBtn.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); const newW = Math.max(6, Math.min(40, Number(gridWInput.value) || GRID_W)); const newH = Math.max(6, Math.min(40, Number(gridHInput.value) || GRID_H)); const newM = Math.max(1, Math.min(newW*newH-1, Number(minesInput.value) || MINES)); GRID_W = newW; GRID_H = newH; MINES = newM; player.pos.set(0,1.6, GRID_H/2 + 3); camera.position.copy(player.pos); restartGame(); settingsPanel.classList.remove('show'); }, { passive:false });
+  applyBtn.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); const newW = Math.max(6, Math.min(40, Number(gridWInput.value) || GRID_W)); const newH = Math.max(6, Math.min(40, Number(gridHInput.value) || GRID_H)); const newM = Math.max(1, Math.min(newW*newH-1, Number(minesInput.value) || MINES)); GRID_W = newW; GRID_H = newH; MINES = newM; player.pos.set(0,1.6, GRID_H/2 + 3); camera.position.copy(player.pos); restartGame(true); settingsPanel.classList.remove('show'); }, { passive:false });
 
   function setupStepper(decId, incId, inputEl, min, max){
     document.getElementById(decId).addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); inputEl.value = Math.max(min, Number(inputEl.value) - 1); }, { passive:false});
@@ -686,24 +728,59 @@ const SAVE_KEY = 'minesweeper_save_v1';
   // Save / Load / Clear
   saveBtn.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); saveState(); alert('Saved progress to localStorage.'); }, { passive:false });
   loadBtn.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); const ok = loadState(); if (!ok) alert('No save found.'); else alert('Loaded save.'); }, { passive:false });
-  clearBtn.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); clearSave(); alert('Save cleared from localStorage.'); setStreak(0); }, { passive:false });
+  clearBtn.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault();
+    // confirmation prompt before clearing save and resetting streak (requested)
+    const conf = confirm('Clear saved progress and reset streak? This cannot be undone.');
+    if (!conf) return;
+    clearSave();
+    setStreak(0);
+    setTotalPoints(0);
+    alert('Save cleared and streak/points reset.');
+  }, { passive:false });
 
   exportBtn.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); exportSaveToClipboard(); }, { passive:false });
   importBtn.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); importSaveFromPrompt(); }, { passive:false });
 
-  // overlay restart
-  document.getElementById('overlayRestart').addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault(); restartGame(); }, { passive:false });
+  // overlay restart button: **preserve streak if overlay is for a WIN**
+  document.getElementById('overlayRestart').addEventListener('pointerdown', (e)=>{
+    e.stopPropagation(); e.preventDefault();
+    const overlayTitle = document.getElementById('overlayTitle').textContent || '';
+    if (overlayTitle.includes('Win')) {
+      // do NOT reset streak (user asked this)
+      restartGame(false);
+    } else {
+      // if they lost, resetting streak already happened at death; a restart here should reset progress (but streak is already zero)
+      restartGame(true);
+    }
+  }, { passive:false });
 
-  // restart logic: reset streak on manual restart (user requested)
-  function restartGame(){
+  // restart button in HUD: keep behavior of manual reset (resets streak) — user can use Clear button for confirmation if they want explicit reset
+  const restartBtn = document.getElementById('restartBtn');
+  restartBtn.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); e.preventDefault();
+    const conf = confirm('Restarting will reset your streak. Continue?');
+    if (conf) restartGame(true);
+    else restartGame(false); // allow soft restart preserving streak if user cancels reset
+  }, { passive:false });
+
+  // restart function: pass resetStreak boolean (default true for full reset)
+  function restartGame(resetStreak = true){
+    // dispose textures / scorch
     tiles.forEach(t => { if (t.topTexture && t.topTexture.tex) t.topTexture.tex.dispose && t.topTexture.tex.dispose(); if (t.scorch) scene.remove(t.scorch); });
+    // dispose particles
     particles.forEach(p => { if (p.mesh) { scene.remove(p.mesh); p.mesh.geometry.dispose && p.mesh.geometry.dispose(); p.mesh.material.dispose && p.mesh.material.dispose(); } if (p.light) scene.remove(p.light); });
     particles.length = 0;
-    running = true; document.getElementById('overlay').classList.remove('show'); buildGrid();
+    // reset world
+    running = true; document.getElementById('overlay').classList.remove('show');
+    buildGrid();
     player.pos.set(0,1.6, GRID_H/2 + 3); player.vel.set(0,0,0); player.yaw = 0; player.pitch = 0; camera.position.copy(player.pos);
     uncoveredCount = 0; document.getElementById('uncovered').textContent = 0;
-    // reset streak on restart (as requested)
-    setStreak(0);
+    // streak & points handling
+    if (resetStreak){
+      setStreak(0);
+      setTotalPoints(0);
+    }
+    // reset timer
+    startTime = null;
     saveState();
   }
 
@@ -713,20 +790,21 @@ const SAVE_KEY = 'minesweeper_save_v1';
     if (ok) console.log('Auto-loaded saved progress.');
   }
 
-  // periodic autosave already set earlier; also save on visibility change + beforeunload
+  // autosave on visibility changes & unload
   document.addEventListener('visibilitychange', ()=>{ if (document.visibilityState === 'hidden') saveState(); });
   window.addEventListener('beforeunload', ()=>{ saveState(); });
 
-  // expose for debugging
+  // expose debug functions
   window.restartMinesweeper = restartGame;
   window._save = saveState;
   window._load = loadState;
   window._clear = clearSave;
 
-  // initial streak UI sync
+  // initial UI sync
   streakEl.textContent = streak;
+  pointsEl.textContent = totalPoints;
 
-  console.log('Save/load + streak features enabled (localStorage).');
+  console.log('Ready — overlay restart preserves streak on wins; clear button confirms before reset; points system enabled.');
 })();
 </script>
 </body>
